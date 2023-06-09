@@ -1,0 +1,119 @@
+---
+title: "Counting RNAseq Differential Expression"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+The majority of Library packages are listed here. If you want to include more just install and load at the end of the list. If code isn't recognizing the function, it is likely that R didn't load the package that the function comes from.
+#load libraries every time
+
+```{r include=FALSE}
+install.packages("devtools")
+install.packages("BiocManager")
+BiocManager::install("TxDb.Rnorvegicus.UCSC.rn6.refGene")
+BiocManager::install("Rsubread")
+BiocManager::install("DESeq2")
+BiocManager::install("Rattus.norvegicus")
+BiocManager::install("EnhancedVolcano")
+BiocManager::install("topGO")
+BiocManager::install("org.Rn.eg.db")
+```
+
+
+#Load libraries
+```{r results='hide'}
+library(ggplot2)
+library(rgl)
+library(tidyr)
+library(RColorBrewer)
+library(expss)
+library(dplyr)
+library(BiocManager)
+library(Rsamtools)
+library(GenomicAlignments)
+library(BiocParallel)
+library(GenomicFeatures)
+library(Rsubread)
+library(DESeq2)
+library(Rsamtools)
+library(pheatmap)
+library(AnnotationDbi)
+library(Rattus.norvegicus)
+library(EnhancedVolcano)
+library(TxDb.Rnorvegicus.UCSC.rn6.refGene)
+library(topGO)
+library(org.Rn.eg.db)
+library(gridExtra)
+library(limma)
+```
+
+Set your working directory and pull in your reference genome to compare your samples to. We will read the gene model from an Ensembl GTF file. Be sure your gene model reflects the same model used in your samples. 
+
+#***Define the Gene Model***#
+```{r}
+setwd("P:/OEH/Faculty/hlehmler/research/Lehmler Group-Amanda Bullert/2_SubQ/rawRNAseq/usftp21.novogene.com/01.RawData/fastq_files/BAM_files/") #setting directory
+
+rn6_ref<-TxDb.Rnorvegicus.UCSC.rn6.refGene
+rn6_ref
+```
+
+For additional notes reference "https://www.bioconductor.org/help/course-materials/2016/CSAMA/lab-3-rnaseq/rnaseq_gene_CSAMA2016.html"
+
+The following line produces a GRangesList of all the exons grouped by gene (Lawrence et al. 2013). Each element of the list is a GRanges object of the exons for a gene
+```{r}
+ebg <- exonsBy(rn6_ref, 
+               by="gene")
+ebg
+g_ids<-names(ebg)
+
+```
+
+Now that our gene model reference is ready we can load in samples and analyze them accordingly. I found separating by tissue type was easiest. But it can also be helpful to load all samples together. 
+
+#***Samples*** Loading meta data
+```{r}
+meta_data<- read.csv(file = "RNAseq_bamlist_metadata.csv", #reading in the sample information
+                   header = T, 
+                   sep = ",")
+
+filenames <- file.path("P:/OEH/Faculty/hlehmler/research/Lehmler Group-Amanda Bullert/2_SubQ/rawRNAseq/usftp21.novogene.com/01.RawData/fastq_files/BAM_files/", meta_data$bam_ID)
+file.exists(filenames) #a sanity check to make sure you have files named
+```
+
+```{r}
+bamfiles <- BamFileList(filenames, yieldSize = 2000000)
+
+list.files(filenames)
+seqinfo(bamfiles[1])
+```
+
+#***Counting***
+```{r}
+se <- summarizeOverlaps(features=ebg, #define the gene reference
+                            reads=bamfiles, #samples to be read
+                            mode="Union", 
+                            singleEnd=FALSE, #False indicates samples are paired-end
+                            ignore.strand=FALSE, #not a strand specific experiment
+                            BPPARAM= SerialParam(progressbar = TRUE)) #progress bar shown
+se
+head(assay(se)) #access the counts
+str(metadata(rowRanges(se))) #just to look a the structure of data
+```
+
+
+
+```{r}
+rownames(meta_data)<-meta_data$bam_ID
+colData(se) #metadata about the samples
+colData(se)<-DataFrame(meta_data) #take the sample info and assign it as the metadata
+se$exposure<- as.factor(se$exposure)
+se$tissue_type<- as.factor(se$tissue_type)#organizing structure of groups
+se$sex<- as.factor(se$sex)
+se$exposure<- relevel(se$exposure, 
+                           "Sham") # tells the system which group is "control"
+se <- se[ rowSums(assay(se)) >= 10, ] #remove genes that have a total count less than 10, a good prefilter measure
+```
+
+
+
